@@ -20,7 +20,7 @@ controllerManager:
     image:
       repository: gcr.io/k8s-staging-kueue/kueue
       # This should be set to 'IfNotPresent' for released version      
-      pullPolicy: Always
+      pullPolicy: IfNotPresent  # Prevent accidental container updates
     resources:
       limits:
         cpu: 500m
