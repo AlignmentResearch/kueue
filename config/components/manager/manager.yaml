@@ -60,3 +60,5 @@ spec:
       - name: tmp
         emptyDir:
           sizeLimit: 1Mi
+      serviceAccountName: controller-manager
+      terminationGracePeriodSeconds: 10
