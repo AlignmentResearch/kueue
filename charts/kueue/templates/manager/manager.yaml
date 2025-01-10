@@ -87,3 +87,6 @@ spec:
       - configMap:
           name: {{ include "kueue.fullname" . }}-manager-config
         name: manager-config
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Mi
