@@ -17,6 +17,8 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
+        seccompProfile:
+          type: "RuntimeDefault"
       containers:
       - command:
         - /manager
@@ -27,6 +29,9 @@ spec:
         name: manager
         securityContext:
           allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop: ["ALL"]
         livenessProbe:
           httpGet:
             path: /healthz
@@ -48,5 +53,10 @@ spec:
           requests:
             cpu: 500m
             memory: 512Mi
-      serviceAccountName: controller-manager
-      terminationGracePeriodSeconds: 10
+        volumeMounts:
+        - mountPath: /tmp
+          name: tmp
+      volumes:
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Mi
