@@ -68,7 +68,7 @@ spec:
           name: manager-config
           subPath: controller_manager_config.yaml
         - mountPath: /tmp
-          name: cert-scratch
+          name: tmp
       - args:
         - --secure-listen-address=0.0.0.0:8443
         - --upstream=http://127.0.0.1:8080/
@@ -83,7 +83,7 @@ spec:
           protocol: TCP
         resources: {}
         securityContext:
-          {{- toYaml .Values.controllerManager.manager.containerSecurityContext | nindent 10 }}
+          {{- toYaml .Values.controllerManager.kubeRbacProxy.containerSecurityContext | nindent 10 }}
       securityContext:
         {{- toYaml .Values.controllerManager.manager.podSecurityContext | nindent 8 }}
       serviceAccountName: {{ include "kueue.fullname" . }}-controller-manager
@@ -104,5 +104,6 @@ spec:
       - configMap:
           name: {{ include "kueue.fullname" . }}-manager-config
         name: manager-config
-      - name: cert-scratch
-        emptyDir: {}
+      - name: tmp
+        emptyDir:
+          sizeLimit: 1Mi
