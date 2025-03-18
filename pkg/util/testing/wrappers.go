@@ -548,18 +548,33 @@ func (w *AdmissionWrapper) Obj() *kueue.Admission {
 }
 
 func (w *AdmissionWrapper) Assignment(r corev1.ResourceName, f kueue.ResourceFlavorReference, value string) *AdmissionWrapper {
-	w.PodSetAssignments[0].Flavors[r] = f
-	w.PodSetAssignments[0].ResourceUsage[r] = resource.MustParse(value)
+	w.AssignmentWithIndex(0, r, f, value)
 	return w
 }
 
 func (w *AdmissionWrapper) AssignmentPodCount(value int32) *AdmissionWrapper {
-	w.PodSetAssignments[0].Count = ptr.To(value)
+	w.AssignmentPodCountWithIndex(0, value)
 	return w
 }
 
 func (w *AdmissionWrapper) TopologyAssignment(ts *kueue.TopologyAssignment) *AdmissionWrapper {
-	w.PodSetAssignments[0].TopologyAssignment = ts
+	w.TopologyAssignmentWithIndex(0, ts)
+	return w
+}
+
+func (w *AdmissionWrapper) AssignmentWithIndex(index int32, r corev1.ResourceName, f kueue.ResourceFlavorReference, value string) *AdmissionWrapper {
+	w.PodSetAssignments[index].Flavors[r] = f
+	w.PodSetAssignments[index].ResourceUsage[r] = resource.MustParse(value)
+	return w
+}
+
+func (w *AdmissionWrapper) AssignmentPodCountWithIndex(index, value int32) *AdmissionWrapper {
+	w.PodSetAssignments[index].Count = ptr.To(value)
+	return w
+}
+
+func (w *AdmissionWrapper) TopologyAssignmentWithIndex(index int32, ts *kueue.TopologyAssignment) *AdmissionWrapper {
+	w.PodSetAssignments[index].TopologyAssignment = ts
 	return w
 }
 
@@ -1291,6 +1306,16 @@ func (c *ContainerWrapper) WithResourceReq(resourceName corev1.ResourceName, qua
 		resourceName: resource.MustParse(quantity),
 	})
 	c.Container.Resources.Requests = requests
+
+	return c
+}
+
+// WithResourceLimit appends a resource limit to the container.
+func (c *ContainerWrapper) WithResourceLimit(resourceName corev1.ResourceName, quantity string) *ContainerWrapper {
+	limits := utilResource.MergeResourceListKeepFirst(c.Container.Resources.Limits, corev1.ResourceList{
+		resourceName: resource.MustParse(quantity),
+	})
+	c.Container.Resources.Limits = limits
 
 	return c
 }

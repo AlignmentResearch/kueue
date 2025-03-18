@@ -19,8 +19,10 @@ package tas
 import (
 	"context"
 
+	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/workqueue"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/ptr"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -44,6 +46,7 @@ const (
 )
 
 type topologyReconciler struct {
+	log                   logr.Logger
 	client                client.Client
 	queues                *queue.Manager
 	cache                 *cache.Cache
@@ -57,6 +60,7 @@ var _ predicate.Predicate = (*topologyReconciler)(nil)
 
 func newTopologyReconciler(c client.Client, queues *queue.Manager, cache *cache.Cache) *topologyReconciler {
 	return &topologyReconciler{
+		log:                   ctrl.Log.WithName(TASTopologyController),
 		client:                c,
 		queues:                queues,
 		cache:                 cache,
@@ -68,7 +72,7 @@ func newTopologyReconciler(c client.Client, queues *queue.Manager, cache *cache.
 
 func (r *topologyReconciler) setupWithManager(mgr ctrl.Manager, cfg *configapi.Configuration) (string, error) {
 	return TASTopologyController, ctrl.NewControllerManagedBy(mgr).
-		Named(TASTopologyController).
+		Named("tas_topology_controller").
 		For(&kueuealpha.Topology{}).
 		WithOptions(controller.Options{NeedLeaderElection: ptr.To(false)}).
 		Watches(&kueue.ResourceFlavor{}, r.resourceFlavorHandler).
@@ -76,8 +80,8 @@ func (r *topologyReconciler) setupWithManager(mgr ctrl.Manager, cfg *configapi.C
 		Complete(core.WithLeadingManager(mgr, r, &kueuealpha.Topology{}, cfg))
 }
 
-// +kubebuilder:rbac:groups=kueue.x-k8s.io,resources=topology,verbs=get;list;watch;update
-// +kubebuilder:rbac:groups=kueue.x-k8s.io,resources=topology/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kueue.x-k8s.io,resources=topologies,verbs=get;list;watch;update
+// +kubebuilder:rbac:groups=kueue.x-k8s.io,resources=topologies/finalizers,verbs=update
 
 func (r topologyReconciler) Reconcile(ctx context.Context, req reconcile.Request) (reconcile.Result, error) {
 	topology := &kueuealpha.Topology{}
@@ -86,7 +90,7 @@ func (r topologyReconciler) Reconcile(ctx context.Context, req reconcile.Request
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	log := ctrl.LoggerFrom(ctx).WithValues("name", req.NamespacedName.Name)
+	log := r.log.WithValues("name", req.NamespacedName.Name)
 	log.V(2).Info("Reconcile Topology")
 
 	if !topology.DeletionTimestamp.IsZero() {
@@ -107,9 +111,7 @@ func (r topologyReconciler) Reconcile(ctx context.Context, req reconcile.Request
 			}
 			log.V(5).Info("Removed finalizer")
 		}
-	}
-
-	if controllerutil.AddFinalizer(topology, kueue.ResourceInUseFinalizerName) {
+	} else if controllerutil.AddFinalizer(topology, kueue.ResourceInUseFinalizerName) {
 		if err := r.client.Update(ctx, topology); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -136,11 +138,15 @@ func (r *topologyReconciler) Delete(e event.DeleteEvent) bool {
 	if !isTopology {
 		return true
 	}
+	log := r.log.WithValues("topology", klog.KObj(topology))
+	log.V(2).Info("Topology delete event")
+
 	defer r.queues.NotifyTopologyUpdateWatchers(topology, nil)
 	// Update the cache to account for the deleted topology, before notifying
 	// the listeners.
 	for flName, flCache := range r.tasCache.Clone() {
 		if kueue.TopologyReference(topology.Name) == flCache.TopologyName {
+			log.V(3).Info("Deleting topology from cache for flavor", "flavorName", flName)
 			r.cache.DeleteTopologyForFlavor(flName)
 		}
 	}

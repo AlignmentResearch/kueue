@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	apivalidation "k8s.io/apimachinery/pkg/api/validation"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -91,6 +92,9 @@ func (wh *Webhook) Default(ctx context.Context, obj runtime.Object) error {
 			ss.Spec.Template.Annotations[pod.GroupServingAnnotation] = "true"
 			ss.Spec.Template.Annotations[kueuealpha.PodGroupPodIndexLabelAnnotation] = appsv1.PodIndexLabel
 		}
+		if priorityClass := jobframework.WorkloadPriorityClassName(ss.Object()); priorityClass != "" {
+			ss.Spec.Template.Labels[constants.WorkloadPriorityClassLabel] = priorityClass
+		}
 	}
 
 	return nil
@@ -112,12 +116,16 @@ func (wh *Webhook) ValidateCreate(ctx context.Context, obj runtime.Object) (warn
 }
 
 var (
-	labelsPath                = field.NewPath("metadata", "labels")
-	queueNameLabelPath        = labelsPath.Key(constants.QueueLabel)
-	replicasPath              = field.NewPath("spec", "replicas")
-	groupNameLabelPath        = labelsPath.Key(pod.GroupNameLabel)
-	podSpecLabelPath          = field.NewPath("spec", "template", "metadata", "labels")
-	podSpecQueueNameLabelPath = podSpecLabelPath.Key(constants.QueueLabel)
+	labelsPath                 = field.NewPath("metadata", "labels")
+	queueNameLabelPath         = labelsPath.Key(constants.QueueLabel)
+	priorityClassNameLabelPath = labelsPath.Key(constants.WorkloadPriorityClassLabel)
+	groupNameLabelPath         = labelsPath.Key(pod.GroupNameLabel)
+	podSpecLabelPath           = field.NewPath("spec", "template", "metadata", "labels")
+	podSpecQueueNameLabelPath  = podSpecLabelPath.Key(constants.QueueLabel)
+	specPath                   = field.NewPath("spec")
+	replicasPath               = specPath.Child("replicas")
+	specTemplatePath           = specPath.Child("template")
+	podSpecPath                = specTemplatePath.Child("spec")
 )
 
 func (wh *Webhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Object) (warnings admission.Warnings, err error) {
@@ -141,22 +149,34 @@ func (wh *Webhook) ValidateUpdate(ctx context.Context, oldObj, newObj runtime.Ob
 		oldStatefulSet.GetLabels()[pod.GroupNameLabel],
 		groupNameLabelPath,
 	)...)
+	allErrs = append(allErrs, jobframework.ValidateUpdateForWorkloadPriorityClassName(
+		oldStatefulSet.Object(),
+		newStatefulSet.Object(),
+	)...)
 
-	oldReplicas := ptr.Deref(oldStatefulSet.Spec.Replicas, 1)
-	newReplicas := ptr.Deref(newStatefulSet.Spec.Replicas, 1)
-
-	// Allow only scale down to zero and scale up from zero.
-	// TODO(#3279): Support custom resizes later
-	if newReplicas != 0 && oldReplicas != 0 {
-		allErrs = append(allErrs, apivalidation.ValidateImmutableField(
-			newStatefulSet.Spec.Replicas,
-			oldStatefulSet.Spec.Replicas,
-			replicasPath,
+	if isManagedByKueue(newStatefulSet.Object()) {
+		allErrs = append(allErrs, jobframework.ValidateImmutablePodGroupPodSpec(
+			&newStatefulSet.Spec.Template.Spec,
+			&oldStatefulSet.Spec.Template.Spec,
+			podSpecPath,
 		)...)
-	}
 
-	if oldReplicas == 0 && newReplicas > 0 && newStatefulSet.Status.Replicas > 0 {
-		allErrs = append(allErrs, field.Forbidden(replicasPath, "scaling down is still in progress"))
+		oldReplicas := ptr.Deref(oldStatefulSet.Spec.Replicas, 1)
+		newReplicas := ptr.Deref(newStatefulSet.Spec.Replicas, 1)
+
+		// Allow only scale down to zero and scale up from zero.
+		// TODO(#3279): Support custom resizes later
+		if newReplicas != 0 && oldReplicas != 0 {
+			allErrs = append(allErrs, apivalidation.ValidateImmutableField(
+				newStatefulSet.Spec.Replicas,
+				oldStatefulSet.Spec.Replicas,
+				replicasPath,
+			)...)
+		}
+
+		if oldReplicas == 0 && newReplicas > 0 && newStatefulSet.Status.Replicas > 0 {
+			allErrs = append(allErrs, field.Forbidden(replicasPath, "scaling down is still in progress"))
+		}
 	}
 
 	return warnings, allErrs.ToAggregate()
@@ -169,4 +189,14 @@ func (wh *Webhook) ValidateDelete(context.Context, runtime.Object) (warnings adm
 func GetWorkloadName(statefulSetName string) string {
 	// Passing empty UID as it is not available before object creation
 	return jobframework.GetWorkloadNameForOwnerWithGVK(statefulSetName, "", gvk)
+}
+
+func isManagedByKueue(obj client.Object) bool {
+	objectOwner := metav1.GetControllerOf(obj)
+	if objectOwner != nil && jobframework.IsOwnerManagedByKueue(objectOwner) {
+		return false
+	} else if jobframework.QueueNameForObject(obj) != "" {
+		return true
+	}
+	return false
 }

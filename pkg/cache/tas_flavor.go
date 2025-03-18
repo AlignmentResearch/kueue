@@ -92,7 +92,10 @@ func (c *TASFlavorCache) snapshot(ctx context.Context) (*TASFlavorSnapshot, erro
 	}
 	requiredLabelKeys := client.HasLabels{}
 	requiredLabelKeys = append(requiredLabelKeys, c.Levels...)
-	err := c.client.List(ctx, nodes, requiredLabels, requiredLabelKeys, client.MatchingFields{indexer.ReadyNode: "true"})
+	err := c.client.List(ctx, nodes, requiredLabels, requiredLabelKeys, client.MatchingFields{
+		indexer.ReadyNode:       "true",
+		indexer.SchedulableNode: "true",
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to list nodes for TAS: %w", err)
 	}
@@ -124,7 +127,7 @@ func (c *TASFlavorCache) snapshotForNodes(log logr.Logger, nodes []corev1.Node, 
 	}
 	snapshot.initialize()
 	for domainID, usage := range c.usage {
-		snapshot.addUsage(domainID, usage)
+		snapshot.addTASUsage(domainID, usage)
 	}
 	for _, pod := range pods {
 		// skip unscheduled or terminal pods as they don't use any capacity
@@ -134,7 +137,7 @@ func (c *TASFlavorCache) snapshotForNodes(log logr.Logger, nodes []corev1.Node, 
 		if domainID, ok := nodeToDomain[pod.Spec.NodeName]; ok {
 			requests := limitrange.TotalRequests(&pod.Spec)
 			usage := resources.NewRequests(requests)
-			snapshot.addUsage(domainID, usage)
+			snapshot.addNonTASUsage(domainID, usage)
 		}
 	}
 	return snapshot
@@ -159,8 +162,10 @@ func (c *TASFlavorCache) updateUsage(topologyRequests []workload.TopologyDomainR
 		}
 		if op == subtract {
 			c.usage[domainID].Sub(tr.Requests)
+			c.usage[domainID].Sub(resources.Requests{corev1.ResourcePods: int64(tr.Count)})
 		} else {
 			c.usage[domainID].Add(tr.Requests)
+			c.usage[domainID].Add(resources.Requests{corev1.ResourcePods: int64(tr.Count)})
 		}
 	}
 }

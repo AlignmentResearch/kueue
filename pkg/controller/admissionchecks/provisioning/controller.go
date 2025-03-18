@@ -307,11 +307,7 @@ func (c *Controller) syncOwnedProvisionRequest(
 
 			if err := c.client.Create(ctx, req); err != nil {
 				msg := fmt.Sprintf("Error creating ProvisioningRequest %q: %v", requestName, err)
-				ac.Message = api.TruncateConditionMessage(msg)
-				workload.SetAdmissionCheckState(&wl.Status.AdmissionChecks, *ac)
-
-				c.record.Eventf(wl, corev1.EventTypeWarning, "FailedCreate", api.TruncateEventMessage(msg))
-				return nil, err
+				return nil, c.handleError(ctx, wl, ac, msg, err)
 			}
 			c.record.Eventf(wl, corev1.EventTypeNormal, "ProvisioningRequestCreated", "Created ProvisioningRequest: %q", req.Name)
 			activeOrLastPRForChecks[checkName] = req
@@ -341,6 +337,22 @@ func (c *Controller) remainingTimeToRetry(pr *autoscaling.ProvisioningRequest, f
 	}
 	timeElapsedSinceLastFailure := time.Since(cond.LastTransitionTime.Time)
 	return backoffDuration - timeElapsedSinceLastFailure
+}
+
+func (c *Controller) handleError(ctx context.Context, wl *kueue.Workload, ac *kueue.AdmissionCheckState, msg string, err error) error {
+	c.record.Eventf(wl, corev1.EventTypeWarning, "FailedCreate", api.TruncateEventMessage(msg))
+
+	ac.Message = api.TruncateConditionMessage(msg)
+	wlPatch := workload.BaseSSAWorkload(wl)
+	workload.SetAdmissionCheckState(&wlPatch.Status.AdmissionChecks, *ac)
+
+	patchErr := c.client.Status().Patch(
+		ctx, wlPatch, client.Apply,
+		client.FieldOwner(kueue.ProvisioningRequestControllerName),
+		client.ForceOwnership,
+	)
+
+	return errors.Join(err, patchErr)
 }
 
 func (c *Controller) syncProvisionRequestsPodTemplates(ctx context.Context, wl *kueue.Workload, prName string, prc *kueue.ProvisioningRequestConfig) error {
@@ -796,7 +808,7 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 		acHandlerOverride: ach.reconcileWorkloadsUsing,
 	}
 	err := ctrl.NewControllerManagedBy(mgr).
-		Named("provisioning-workload").
+		Named("provisioning_workload").
 		For(&kueue.Workload{}).
 		Owns(&autoscaling.ProvisioningRequest{}).
 		Watches(&kueue.AdmissionCheck{}, ach).
@@ -815,7 +827,7 @@ func (c *Controller) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
-		Named("provisioning-admissioncheck").
+		Named("provisioning_admissioncheck").
 		For(&kueue.AdmissionCheck{}).
 		Watches(&kueue.ProvisioningRequestConfig{}, prcACh).
 		Complete(acReconciler)
