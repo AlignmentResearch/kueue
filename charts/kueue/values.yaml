@@ -28,7 +28,7 @@ controllerManager:
         drop: ["ALL"]
   manager:
     image:
-      repository: us-central1-docker.pkg.dev/k8s-staging-images/kueue/kueue
+      repository: registry.k8s.io/kueue/kueue
       # This should be set to 'IfNotPresent' for released version      
       pullPolicy: Always
     podAnnotations: {}
